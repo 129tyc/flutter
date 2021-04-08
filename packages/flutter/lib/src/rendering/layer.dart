@@ -2518,3 +2518,52 @@ class AnnotatedRegionLayer<T extends Object> extends ContainerLayer {
     properties.add(DiagnosticsProperty<bool>('opaque', opaque, defaultValue: false));
   }
 }
+
+class TextureContext {
+  final int id;
+  bool marker = false;
+
+  TextureContext(this.id);
+
+  void updateMarker() {
+    marker = !marker;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) || other is TextureContext && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
+
+  @override
+  String toString() {
+    return 'TextureContext{id: $id, marker: $marker}';
+  }
+}
+
+class FrozenLayer extends ContainerLayer {
+  TextureContext _context;
+
+  TextureContext get context => _context;
+
+  set context(TextureContext value) {
+    if (value != _context) {
+      _context = value;
+      markNeedsAddToScene();
+    }
+  }
+
+  FrozenLayer(this._context);
+
+  @override
+  void addToScene(ui.SceneBuilder builder, [ui.Offset layerOffset = Offset.zero]) {
+    engineLayer = builder.pushFrozen(
+      _context.id,
+      _context.marker,
+      oldLayer: engineLayer as ui.FrozenEngineLayer,
+    );
+    addChildrenToScene(builder, layerOffset);
+    builder.pop();
+  }
+}

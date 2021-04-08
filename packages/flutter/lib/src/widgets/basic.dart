@@ -7319,3 +7319,206 @@ class _RenderColoredBox extends RenderProxyBoxWithHitTestBehavior {
     }
   }
 }
+
+Set<TextureContext> _pool = Set();
+
+int _globalId = -1;
+
+void _recycleContext(TextureContext context) {
+  if (context == null) {
+    return;
+  }
+  _pool.add(context);
+}
+
+TextureContext _offerContext() {
+  if (_pool.isNotEmpty) {
+    final ctx = _pool.first;
+    _pool.remove(ctx);
+    return ctx;
+  }
+
+  if (_globalId < 0) {
+    _globalId = DateTime.now().millisecondsSinceEpoch % 1000;
+  }
+  _globalId++;
+
+  return TextureContext(_globalId);
+}
+
+typedef void MarkFrozenCallback(bool freeze);
+
+class FrozenController {
+  MarkFrozenCallback _markFreezeCallback;
+
+  void freeze() {
+    _markFreezeCallback?.call(true);
+  }
+
+  void unfreeze() {
+    _markFreezeCallback?.call(false);
+  }
+}
+
+class FrozenBoundary extends SingleChildRenderObjectWidget {
+  final FrozenController controller;
+
+  const FrozenBoundary(this.controller, {
+    Key key,
+    Widget child,
+  }) : super(key: key, child: child);
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return FrozenRenderBox(controller);
+  }
+
+  @override
+  void updateRenderObject(BuildContext context, covariant FrozenRenderBox renderObject) {
+    renderObject.controller = this.controller;
+  }
+}
+
+class FrozenRenderBox extends RenderProxyBox {
+  FrozenController _controller;
+  TextureContext _context;
+  bool _needFreeze = false;
+  bool _freezing = false;
+  FrozenLayer _frozenLayer;
+
+  FrozenRenderBox(this._controller) {
+    this._controller._markFreezeCallback = _markNeedFreeze;
+  }
+
+  void _markNeedFreeze(bool freeze) {
+    if (_context == null || _needFreeze == freeze) {
+      return;
+    }
+
+    assert(() {
+      print('update freeze $freeze');
+      return true;
+    }());
+
+    _needFreeze = freeze;
+    markNeedsPaint();
+  }
+
+  set controller(FrozenController controller) {
+    if (_controller != controller) {
+      assert(() {
+        print('update controller');
+        return true;
+      }());
+
+      _controller._markFreezeCallback = null;
+      controller._markFreezeCallback = _markNeedFreeze;
+      _controller = controller;
+    }
+  }
+
+  FrozenController get controller => _controller;
+
+  @override
+  bool get isRepaintBoundary => true;
+
+  @override
+  void markNeedsPaint() {
+    assert(() {
+      print('markNeedsPaint');
+      return true;
+    }());
+    if (_needFreeze != _freezing) {
+      assert(() {
+        print('not same $_freezing');
+        return true;
+      }());
+
+      super.markNeedsPaint();
+      if (_freezing) {
+        _frozenLayer = null;
+        _freezing = false;
+      }
+    } else {
+      assert(() {
+        print('same $_freezing');
+        return true;
+      }());
+      if (!_freezing) {
+        super.markNeedsPaint();
+      }
+    }
+  }
+
+  @override
+  void attach(covariant PipelineOwner owner) {
+    super.attach(owner);
+    if (_context == null) {
+      _context = _offerContext();
+      assert(() {
+        print('attach, obtain context $_context');
+        return true;
+      }());
+    }
+  }
+
+  @override
+  void detach() {
+    super.detach();
+    assert(() {
+      print('detach, recycle context $_context');
+      return true;
+    }());
+    _recycleContext(_context);
+    _context = null;
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    assert(() {
+      print('paint');
+      return true;
+    }());
+    final frozenLayer = _frozenLayer;
+    if (_freezing && frozenLayer != null) {
+      layer?.append(frozenLayer);
+      return;
+    }
+    super.paint(context, offset);
+
+    if (_needFreeze && !_freezing) {
+      wrap();
+    }
+  }
+
+  void wrap() {
+    final context = _context;
+    if (context == null) {
+      return;
+    }
+
+    context.updateMarker();
+    final frozenLayer = _frozenLayer ?? FrozenLayer(context);
+    frozenLayer.context = context;
+
+    final layers = <Layer>[];
+    var child = layer?.firstChild;
+    while (child != null) {
+      assert(() {
+        print('wrap child ${child.runtimeType}');
+        return true;
+      }());
+      layers.add(child);
+      child = child.nextSibling;
+    }
+
+    layers.forEach((element) {
+      element.remove();
+      frozenLayer.append(element);
+    });
+
+    layer?.append(frozenLayer);
+    _frozenLayer = frozenLayer;
+    _freezing = true;
+  }
+}
